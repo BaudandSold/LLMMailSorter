@@ -1330,16 +1330,142 @@ def filter_unprocessed_emails(emails, args):
 
 def main():
     parser = argparse.ArgumentParser(description='Thunderbird Email Sorter using Local LLM')
-    # [existing arguments]
+    parser.add_argument('--limit', type=int, default=10, help='Maximum number of emails to process')
+    parser.add_argument('--dry-run', action='store_true', help='Dry run (no emails will be moved)')
+    parser.add_argument('--config', type=str, help='Path to config file')
+    parser.add_argument('--reprocess', action='store_true', help='Reprocess already processed emails')
+    parser.add_argument('--max-history', type=int, default=50000, 
+                        help='Maximum number of email hashes to keep in history (default: 50000)')
+    parser.add_argument('--scan-all', action='store_true',
+                        help='Scan all emails to find unprocessed ones (slower but more thorough)')
+    parser.add_argument('--feedback', action='store_true',
+                        help='Enter feedback mode after processing emails')
+    parser.add_argument('--feedback-only', action='store_true',
+                        help='Skip processing emails and only collect feedback on recent classifications')
+    parser.add_argument('--use-thunderbird', action='store_true',
+                        help='Use Thunderbird itself to move emails (not recommended)')
+    parser.add_argument('--debug', action='store_true',
+                        help='Enable extra debugging output')
+    parser.add_argument('--use-imap', action='store_true',
+                        help='Use direct IMAP commands instead of Thunderbird CLI (recommended)')
+    parser.add_argument('--all-folders', action='store_true',
+                        help='Process emails from all IMAP folders, not just INBOX')
+    parser.add_argument('--force', action='store_true',
+                        help='Force processing of emails even if they appear to be in history')
+    parser.add_argument('--clear-history', action='store_true',
+                        help='Clear email processing history before starting')
     parser.add_argument('--feedback-first', action='store_true',
                         help='Get feedback on classification before moving emails')
     args = parser.parse_args()
     
     try:
-        # [existing code until email processing]
+        # Clear history if requested
+        if args.clear_history:
+            history_file = Path.home() / '.config' / 'thunderbird_llm_sorter_history.json'
+            if history_file.exists():
+                print(f"Clearing email processing history at {history_file}")
+                with open(history_file, 'w') as f:
+                    json.dump([], f)
         
-        # Keep track of processed emails for feedback
-        emails_processed = []
+        # Load configuration
+        config = get_config()
+        if args.config:
+            config.read(args.config)
+        
+        # Handle feedback-only mode
+        if args.feedback_only:
+            print("Feedback-only mode is not yet implemented.")
+            return 0
+        
+        # Get Thunderbird profile
+        profile_path = find_thunderbird_profile(config)
+        inbox_folder = config['Thunderbird']['inbox_folder']
+        
+        print(f"Using Thunderbird profile at: {profile_path}")
+        
+        # Force reprocessing if requested
+        if args.force:
+            args.reprocess = True
+        
+        # If we're not reprocessing emails, we need to potentially scan more emails
+        # to find enough unprocessed ones
+        scan_many = not args.reprocess
+
+        # Load processed email hashes once
+        processed_hashes = set() if args.reprocess else load_processed_emails(args.max_history)
+        print(f"Loaded {len(processed_hashes)} processed email hashes from history")
+        
+        # Scan limit increases if we're looking for unprocessed emails
+        scan_limit = 500 if (scan_many or args.scan_all) else args.limit
+        
+        all_emails = []
+        
+        # For IMAP accounts
+        if 'ImapMail/127.0.0.1' in str(profile_path) or args.use_imap:
+            print("Using IMAP connection to fetch emails")
+            # Connect to IMAP
+            imap = connect_to_imap(config)
+            if imap:
+                # If we should check all folders
+                if args.all_folders:
+                    print("Checking all IMAP folders")
+                    folders = list_imap_folders(imap)
+                    
+                    # Process each folder
+                    for folder in folders:
+                        # Skip folders that aren't mailboxes
+                        if folder.startswith("[Gmail]/") or folder == "Outbox" or folder == "[Gmail]":
+                            continue
+                            
+                        print(f"\nProcessing folder: {folder}")
+                        folder_emails = get_emails_from_imap(imap, folder, limit=scan_limit)
+                        
+                        # Add folder name to each email
+                        for email in folder_emails:
+                            email['folder'] = folder
+                            
+                        all_emails.extend(folder_emails)
+                        
+                        # If we've found enough emails, stop
+                        if len(all_emails) >= scan_limit:
+                            break
+                else:
+                    # Just check INBOX
+                    all_emails = get_emails_from_imap(imap, inbox_folder, limit=scan_limit)
+                
+                imap.logout()
+                print(f"Found a total of {len(all_emails)} emails across all folders")
+            else:
+                print("Failed to connect to IMAP server, falling back to file-based approach")
+                all_emails = get_thunderbird_emails(profile_path, inbox_folder, limit=scan_limit)
+        else:
+            # Regular case - file-based approach
+            all_emails = get_thunderbird_emails(profile_path, inbox_folder, limit=scan_limit)
+        
+        # Filter to find unprocessed emails
+        emails_to_process = []
+        for email in all_emails:
+            # Skip if we've already found enough emails to process
+            if len(emails_to_process) >= args.limit:
+                break
+                
+            # If reprocessing or force, include all emails
+            if args.reprocess or args.force:
+                email['hash'] = get_email_hash(email)
+                emails_to_process.append(email)
+                continue
+                
+            # Otherwise, check if it's been processed before
+            email_hash = get_email_hash(email)
+            if email_hash not in processed_hashes:
+                email['hash'] = email_hash
+                emails_to_process.append(email)
+        
+        print(f"Found {len(all_emails)} emails total")
+        print(f"Selected {len(emails_to_process)} emails to process")
+        
+        # List to store emails that have been processed (classified)
+        processed_emails = []
         
         # First pass: Classify all emails, but don't move them yet if feedback-first is enabled
         for email in emails_to_process:
@@ -1364,7 +1490,7 @@ def main():
                 target_folder = "Uncategorized"
             
             email['target_folder'] = target_folder
-            emails_processed.append(email)
+            processed_emails.append(email)
             
             # Move email immediately if feedback-first is not enabled
             if not args.feedback_first and not args.dry_run:
@@ -1398,12 +1524,12 @@ def main():
                     print(f"[DRY RUN] Would move from {source_folder} to {target_folder}")
                 elif args.feedback_first:
                     print(f"Will move after feedback from {source_folder} to {target_folder}")
-                
+        
         # Handle feedback mode
         if args.feedback or args.feedback_first:
-            if emails_processed:
+            if processed_emails:
                 # Modified feedback function that returns corrected classifications
-                updated_emails = interactive_feedback_mode_with_corrections(emails_processed)
+                updated_emails = interactive_feedback_mode_with_corrections(processed_emails)
                 
                 # If feedback-first is enabled, now we move emails with corrected categories
                 if args.feedback_first and not args.dry_run:
