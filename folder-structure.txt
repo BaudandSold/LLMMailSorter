@@ -1,0 +1,97 @@
+# Proton Mail Folder Sorter - Setup Instructions
+
+## Project Structure
+
+Here's the folder structure for the modular email sorter:
+
+```
+proton_mail_sorter/
+│
+├── proton_mail_sorter.py     # Main script
+│
+├── modules/
+│   ├── __init__.py           # Makes modules directory a package
+│   ├── display.py            # Console display formatting
+│   ├── config.py             # Configuration management
+│   ├── imap_client.py        # IMAP email operations
+│   ├── llm_client.py         # LLM classification
+│   └── history.py            # Processing history tracking
+│
+└── README.md                 # Project documentation
+```
+
+## Setup Instructions
+
+1. Create the project directory structure:
+
+```bash
+mkdir -p proton_mail_sorter/modules
+touch proton_mail_sorter/modules/__init__.py
+```
+
+2. Copy each of the module files into the appropriate locations:
+
+   - Copy `proton_mail_sorter.py` to the main directory
+   - Copy each module file (`display.py`, `config.py`, etc.) to the `modules` directory
+
+3. Make the main script executable:
+
+```bash
+chmod +x proton_mail_sorter/proton_mail_sorter.py
+```
+
+4. Run the script:
+
+```bash
+cd proton_mail_sorter
+./proton_mail_sorter.py
+```
+
+On first run, it will create a default configuration file at `~/.config/proton_mail_sorter.ini`. Edit this file with your IMAP server details and other settings.
+
+## Configuration Options
+
+The configuration file has several sections:
+
+1. **IMAP** - Connection settings for your email server
+2. **LLM** - API settings for the local LLM 
+3. **Folders** - Mapping of email categories to folder paths
+4. **PersonalContext** - Settings for personal context customization
+5. **Advanced** - Email search and filtering options
+6. **Display** - Console output formatting options
+
+## Usage Examples
+
+Basic usage:
+```bash
+./proton_mail_sorter.py
+```
+
+Process more emails:
+```bash
+./proton_mail_sorter.py --limit 200
+```
+
+Dry run (test without moving emails):
+```bash
+./proton_mail_sorter.py --dry-run
+```
+
+List all available folders:
+```bash
+./proton_mail_sorter.py --list-folders
+```
+
+Enable debug output:
+```bash
+./proton_mail_sorter.py --debug
+```
+
+## Benefits of Modular Design
+
+This modular design provides several advantages:
+
+1. **Maintainability**: Each module handles a specific responsibility
+2. **Testability**: Modules can be tested independently
+3. **Extendability**: New features can be added by creating new modules
+4. **Readability**: Code is organized logically by function
