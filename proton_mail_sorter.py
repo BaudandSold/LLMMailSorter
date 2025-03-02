@@ -6,6 +6,7 @@ Retrieves emails via IMAP with improved search capabilities,
 classifies them using a local LLM, and moves them to appropriate folders.
 
 Now with auto-classification to reduce LLM usage for faster processing.
+Added spam review functionality to identify false positives in spam folder.
 
 Run this script to start the email sorting process.
 """
@@ -23,6 +24,7 @@ from modules.imap_client import ImapClient
 from modules.llm_client import LlmClient
 from modules.history import HistoryManager
 from modules.auto_classifier import AutoClassifier
+from modules.spam_reviewer import SpamReviewer
 
 
 def parse_args():
@@ -50,6 +52,15 @@ def parse_args():
                        help='Disable auto-classification (use LLM for all emails)')
     parser.add_argument('--suggest-rules', action='store_true',
                        help='Suggest new auto-classification rules based on history')
+    
+    # Add spam review arguments
+    parser.add_argument('--review-spam', action='store_true',
+                        help='Review Spam folder for false positives')
+    parser.add_argument('--confidence-threshold', type=float, default=0.7,
+                        help='Confidence threshold for spam reclassification (0.0-1.0)')
+    parser.add_argument('--rescue-folder', type=str, default='INBOX',
+                        help='Folder to move rescued emails to (default: INBOX)')
+    
     return parser.parse_args()
 
 
@@ -148,6 +159,20 @@ def main():
         if not args.disable_context:
             personal_context = config.load_personal_context()
         
+        # Initialize LLM client
+        llm = LlmClient(config_data['LLM'], display)
+        
+        # Check if we're in spam review mode
+        if args.review_spam:
+            # Initialize spam reviewer
+            spam_reviewer = SpamReviewer(config_data, display, imap, llm, history, auto_classifier)
+            
+            # Update settings from command line arguments
+            spam_reviewer.update_settings(args)
+            
+            # Run the spam review process
+            return 1 if spam_reviewer.review(personal_context) > 0 else 0
+        
         # Connect to IMAP and get emails
         display.header("Email Retrieval")
         emails = imap.get_emails(args.limit, args.debug)
@@ -160,9 +185,6 @@ def main():
         processed_hashes = set() if args.reprocess else history.load(args.max_history)
         if not args.reprocess and processed_hashes:
             display.info(f"Loaded {len(processed_hashes)} processed email hashes from history")
-        
-        # Initialize LLM client
-        llm = LlmClient(config_data['LLM'], display)
         
         # Process each email
         display.header("Email Processing")

@@ -273,20 +273,41 @@ class Display:
         if debug_levels.get(self.debug_level, 0) >= debug_levels.get(level, 0):
             print(f"{self._colorize(f'  {text}', self.DIM)}")
     
-    def progress(self, current, total, text="Processing"):
-        """Print a progress indicator."""
+    def progress(self, current, total, text="Processing", width=30):
+        """
+        Print a progress indicator with percentage and optional time estimate.
+        
+        Args:
+            current: Current progress count
+            total: Total items to process
+            text: Description of the process being tracked
+            width: Width of the progress bar
+        """
         if not self.use_color:
             print(f"\r{text}: {current}/{total} ({int(100 * current / total)}%)", end='', flush=True)
             if current == total:
                 print()
             return
-            
+        
+        # Calculate progress    
         progress = current / total
-        bar_length = 20  # Shorter bar to fit in the display
-        bar = '█' * int(bar_length * progress) + '▒' * (bar_length - int(bar_length * progress))
         percent = int(100 * progress)
-        print(f"\r{self._colorize(text, self.RETRO)}: {self._colorize(f'[{bar}] {percent}% ({current}/{total})', self.BOLD)}", 
-              end='', flush=True)
+        
+        # Create a more detailed progress bar
+        bar_filled = '█' * int(width * progress)
+        bar_empty = '▒' * (width - len(bar_filled))
+        
+        # Show process info - include time estimate if in the text
+        if " - " in text and "remaining" in text:
+            process_info = text
+        else:
+            process_info = f"{text}: {current}/{total}"
+        
+        # Construct the full progress line
+        progress_line = f"\r{self._colorize(process_info, self.RETRO)} {self._colorize(f'[{bar_filled}{bar_empty}] {percent}%', self.BOLD)}"
+        
+        # Print the progress line
+        print(progress_line, end='', flush=True)
         if current == total:
             print()
     
